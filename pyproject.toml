@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "appsmith-mcp"
+version = "0.1.0"
+description = "MCP server that talks to a running Appsmith editor over Firefox BiDi."
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp",
+    "websockets",
+    "jsbeautifier",
+    "cssbeautifier",
+    "beautifulsoup4",
+]
+
+[project.scripts]
+appsmith-mcp = "appsmith_mcp.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"appsmith_mcp" = ["snippets/*.js", "widget_props.json"]
