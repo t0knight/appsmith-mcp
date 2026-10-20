@@ -10,7 +10,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
-    "mcp",
+    "mcp>=1.9,<2",
     "websockets",
     "jsbeautifier",
     "cssbeautifier",
@@ -24,4 +24,4 @@ appsmith-mcp = "appsmith_mcp.server:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"appsmith_mcp" = ["snippets/*.js", "widget_props.json"]
+"appsmith_mcp" = ["snippets/*.js", "widget_props.json", "default_ui_module_dsl.json", "guides/*.md"]

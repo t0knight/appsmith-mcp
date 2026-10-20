@@ -2,23 +2,14 @@
     const COMPOSITE = {
         STATBOX_WIDGET: { label: 0, value: 1, change: 2 },
     };
-    const bindRe = /\{\{[\s\S]*?\}\}/;
-    const isBindingValue = v => typeof v === "string" && bindRe.test(v);
-    const isTriggerName = k => k.startsWith("on");
-    const isPlainObject = x => x && typeof x === "object" && !Array.isArray(x);
-    const deepMerge = (target, source) => {
-        if (!isPlainObject(target) || !isPlainObject(source)) return source;
-        const out = { ...target };
-        for (const [k, v] of Object.entries(source)) {
-            out[k] = isPlainObject(v) && isPlainObject(out[k]) ? deepMerge(out[k], v) : v;
-        }
-        return out;
-    };
+    // type -> its real label property ("label" for most, "labelText" for select/slider/group).
+    // Injected from server.py; an empty map (unreplaced) just disables normalization.
+    const LABEL_PROP_BY_TYPE = /*__LABEL_MAP__*/{};
 
     const store = window.__store;
     const overrides = {}; // widgetId -> property modifications to persist into the DSL
 
-    const applyOne = (widgetId, props) => {
+    const applyOne = (widgetId, props, triggerKeys) => {
         const cw = store.getState().entities.canvasWidgets || {};
         const w = cw[widgetId];
         if (!w) return { widgetId, error: `widget ${widgetId} not found` };
@@ -26,6 +17,19 @@
         const composite = COMPOSITE[w.type];
         const delegated = [];
         const remaining = { ...props };
+
+        // Accept `label`/`labelText` interchangeably and normalize to whichever this widget type
+        // actually uses, so a caller doesn't lose a round-trip discovering the right name.
+        const normalized = [];
+        const labelProp = LABEL_PROP_BY_TYPE[w.type];
+        if (labelProp) {
+            const other = labelProp === "label" ? "labelText" : "label";
+            if (other in remaining && !(labelProp in remaining)) {
+                remaining[labelProp] = remaining[other];
+                delete remaining[other];
+                normalized.push({ from: other, to: labelProp });
+            }
+        }
         if (composite) {
             const canvas = Object.values(cw).find(c => c.parentId === w.widgetId && c.type === "CANVAS_WIDGET");
             const textKids = Object.values(cw)
@@ -56,34 +60,12 @@
             delete remaining.isVisible;
         }
 
-        const touched = Object.keys(remaining);
-        const bindList = (w.dynamicBindingPathList || []).filter(p => !touched.includes(p.key));
-        const triggerList = (w.dynamicTriggerPathList || []).filter(p => !touched.includes(p.key));
-
-        const registered = { bindings: [], triggers: [], literals: [], delegated };
-        for (const [k, v] of Object.entries(remaining)) {
-            if (isTriggerName(k)) {
-                triggerList.push({ key: k });
-                registered.triggers.push(k);
-            } else if (isBindingValue(v)) {
-                bindList.push({ key: k });
-                registered.bindings.push(k);
-            } else {
-                registered.literals.push(k);
-            }
-        }
-
-        const merged = {};
-        for (const [k, v] of Object.entries(remaining)) {
-            merged[k] = isPlainObject(v) && isPlainObject(w[k]) ? deepMerge(w[k], v) : v;
-        }
+        // Final values + binding/trigger/JS-mode path lists, exactly as the property pane stores them.
+        const policy = __propertyPolicy({ widget: w, props: remaining, triggerKeys: triggerKeys || [] });
+        const registered = { ...policy.registered, delegated, normalized };
 
         if (Object.keys(remaining).length || (composite && delegated.length === 0)) {
-            const modify = {
-                ...merged,
-                dynamicBindingPathList: bindList,
-                dynamicTriggerPathList: triggerList,
-            };
+            const modify = policy.modify;
             // BATCH_UPDATE keeps the live client/eval state in sync; the DSL-PUT below is
             // what actually persists server-side.
             store.dispatch({
@@ -96,52 +78,17 @@
         return { widgetId, name: w.widgetName, applied: registered };
     };
 
-    const results = UPDATES.map(u => applyOne(u.widget_id, u.props || {}));
+    const results = UPDATES.map(u => applyOne(u.widget_id, u.props || {}, u.trigger_keys || []));
 
-    // Persist via an explicit layout PUT — BATCH_UPDATE_WIDGET_PROPERTY only mutates the
-    // client Redux store and relies on a debounced autosave that often never lands.
+    // Persist via the shared explicit layout PUT — BATCH_UPDATE_WIDGET_PROPERTY only mutates the
+    // client Redux store and relies on a debounced autosave that often never lands. `overrides`
+    // carries the modified props (incl. delegated composite children) into the DSL tree.
     if (Object.keys(overrides).length) {
-        const state = store.getState();
-        const cw = state.entities.canvasWidgets || {};
-        const pid = state.entities.pageList.currentPageId;
-        const pw = (state.ui.pageWidgets || {})[pid];
-        const appId = state.ui.applications?.currentApplication?.id;
-        const layoutId = pw && pw.layoutId;
-        if (appId && layoutId && pid) {
-            const build = (id) => {
-                const src = cw[id];
-                if (!src) return null;
-                const node = { ...src, ...(overrides[id] || {}) };
-                if (Array.isArray(src.children)) {
-                    node.children = src.children.map(build).filter(x => x !== null);
-                }
-                return node;
-            };
-            const tree = build("0");
-            if (tree) {
-                const url = "/api/v1/layouts/" + layoutId + "/pages/" + pid + "?applicationId=" + appId;
-                try {
-                    const r = await fetch(url, {
-                        method: "PUT",
-                        headers: { "Content-Type": "application/json" },
-                        credentials: "include",
-                        body: JSON.stringify({ dsl: tree }),
-                    });
-                    const ok = r.status >= 200 && r.status < 300;
-                    let errText = null;
-                    if (!ok) { try { errText = (await r.text()).slice(0, 300); } catch (e) {} }
-                    for (const res of results) {
-                        if (!res.error && overrides[res.widgetId]) {
-                            if (ok) res.synced = true;
-                            else res.error = "save failed: HTTP " + r.status + (errText ? " " + errText : "");
-                        }
-                    }
-                } catch (e) {
-                    for (const res of results) {
-                        if (!res.error && overrides[res.widgetId]) res.error = String(e);
-                    }
-                }
-            }
+        const p = await __persistLayout({ overrides });
+        for (const res of results) {
+            if (res.error || !overrides[res.widgetId]) continue;
+            if (p.persisted) res.persisted = true;
+            else res.error = p.error || ("save failed: HTTP " + p.status);
         }
     }
 

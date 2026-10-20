@@ -5,25 +5,29 @@
     const parent = cw[parentId];
     if (!parent) return { error: `parent ${parentId} not found` };
 
-    // Width: fill the parent canvas's full column count.
-    const columns = parent.snapColumns || 64;
+    // Width: caller's COLUMNS, else fill the parent canvas's full column count.
+    const columns = (typeof COLUMNS === "number" && COLUMNS > 0) ? COLUMNS : (parent.snapColumns || 64);
+    const leftColumn = (typeof LEFT === "number") ? LEFT : 0;
+    const topRow = (typeof TOP === "number") ? TOP : 0;
 
-    // Height: auto-height so the box tracks the content (the widget CSS sets the content
-    // to a 16:9 ratio via ui-width). This stays correct across editor/preview where the
-    // widget's pixel width differs — a fixed row count overflows in preview. `rows` here
-    // is just a sensible starting estimate (16:9 at the current width).
+    // Height: caller's ROWS, else auto-height so the box tracks the content (the widget CSS
+    // sets the content to a 16:9 ratio via ui-width). Auto stays correct across editor/preview
+    // where the widget's pixel width differs — a fixed row count overflows in preview. The
+    // measured value is just a sensible starting estimate (16:9 at the current width).
     const rowSpace = parent.parentRowSpace || 10;
     const canvasDom = document.querySelector(`.appsmith_widget_${parentId}`);
     const widthPx = canvasDom ? canvasDom.getBoundingClientRect().width : window.innerWidth;
     const availPx = widthPx * 0.5625;
-    const rows = availPx ? Math.max(4, Math.floor(availPx / rowSpace)) : (parent.bottomRow || 30);
+    const rows = (typeof ROWS === "number" && ROWS > 0)
+        ? ROWS
+        : (availPx ? Math.max(4, Math.floor(availPx / rowSpace)) : (parent.bottomRow || 30));
 
     const id = "w_" + Math.random().toString(36).slice(2, 10);
     window.__store.dispatch({
         type: "WIDGET_ADD_CHILD",
         payload: {
             widgetId: parentId, type: "CUSTOM_WIDGET", newWidgetId: id,
-            leftColumn: 0, topRow: 0, columns, rows,
+            leftColumn, topRow, columns, rows,
             parentRowSpace: rowSpace, parentColumnSpace: parent.parentColumnSpace || 10,
             props: {},
         },
@@ -36,6 +40,17 @@
         maxDynamicHeight: 200,
     };
     if (NAME) modify.widgetName = NAME;
+    // Register any {{...}} prop (e.g. the themed backgroundColor) as a dynamic binding, else
+    // Appsmith stores it as a literal string and never evaluates it.
+    const w0 = window.__store.getState().entities.canvasWidgets[id] || {};
+    const bindPaths = (w0.dynamicBindingPathList || []).slice();
+    const seen = new Set(bindPaths.map(p => p.key));
+    for (const [k, v] of Object.entries(modify)) {
+        if (typeof v === "string" && /\{\{[\s\S]*?\}\}/.test(v) && !seen.has(k)) {
+            bindPaths.push({ key: k }); seen.add(k);
+        }
+    }
+    modify.dynamicBindingPathList = bindPaths;
     window.__store.dispatch({
         type: "BATCH_UPDATE_WIDGET_PROPERTY",
         payload: { widgetId: id, updates: { modify } },

@@ -42,7 +42,7 @@ requires-dist = [
     { name = "beautifulsoup4" },
     { name = "cssbeautifier" },
     { name = "jsbeautifier" },
-    { name = "mcp" },
+    { name = "mcp", specifier = ">=1.9,<2" },
     { name = "websockets" },
 ]
 

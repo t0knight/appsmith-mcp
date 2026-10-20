@@ -1,4 +1,4 @@
-(() => {
+(async () => {
     const cw = window.__store.getState().entities.canvasWidgets || {};
     const w = cw[WIDGET_ID];
     if (!w) return { error: `widget ${WIDGET_ID} not found` };
@@ -55,10 +55,16 @@
         result.reordered = true;
     }
 
+    // Tab add/remove/reorder all land in canvasWidgets (tabsObj + child canvases) before this
+    // point; persist the whole tree via the shared layout PUT so the tabs survive a reload.
+    const p = await __persistLayout({});
     const final = (window.__store.getState().entities.canvasWidgets[WIDGET_ID] || {}).tabsObj || {};
-    return {
+    const out = {
         widgetId: WIDGET_ID,
         tabs: Object.values(final).sort((a, b) => a.index - b.index).map(t => ({ id: t.id, label: t.label, widgetId: t.widgetId, index: t.index })),
         ...result,
     };
+    if (p.persisted) out.persisted = true;
+    else out.error = p.error || ("save failed: HTTP " + p.status);
+    return out;
 })()

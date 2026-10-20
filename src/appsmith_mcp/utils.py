@@ -21,6 +21,27 @@ def format_source(field: str, code: str) -> str:
     return code
 
 
+_STATEMENT_START = re.compile(
+    r"^\s*(?:const|let|var|class|if|for|while|switch|try|do|throw|return|delete|"
+    r"function\b|async\s+function\b)\b"
+)
+
+
+def as_expression(snippet: str) -> str:
+    """Wrap a statement-style snippet in an async IIFE so it can be evaluated.
+
+    Snippets are evaluated as expressions, so `const x = 1; return x;` is a SyntaxError
+    ("expected expression, got keyword 'const'"). A snippet that already starts with `(`
+    is left alone — it is an expression or a hand-written IIFE — and so is a bare
+    expression like `document.title`, which would otherwise lose its value to a wrapper
+    with no `return`."""
+    if not snippet or snippet.lstrip().startswith("("):
+        return snippet
+    if _STATEMENT_START.match(snippet):
+        return f"(async () => {{\n{snippet}\n}})()"
+    return snippet
+
+
 def pick(obj, allowed):
     """Return a new dict with only keys from `allowed`. Drops everything else."""
     if not isinstance(obj, dict):
