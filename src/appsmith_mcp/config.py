@@ -1,2 +1,4 @@
-BIDI_PORT = 9222
+import os
+
+BIDI_PORT = int(os.environ.get("APPSMITH_BIDI_PORT", "9222"))
 BIDI_WS_URL = f"ws://127.0.0.1:{BIDI_PORT}/session"

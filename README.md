@@ -50,10 +50,35 @@ pip install -e .
 ./launch.sh
 ```
 
-This kills any running Firefox and reopens it with the BiDi port enabled (works on macOS,
-Linux, and Windows via Git Bash). Log into Appsmith and navigate to an app's editor page
+This starts Firefox with the BiDi remote-debugging port enabled (works on macOS, Linux,
+and Windows via Git Bash). Log into Appsmith and navigate to an app's editor page
 (`.../edit`) in that window. The server re-bootstraps on the next tool call after any
 navigation.
+
+### Multiple isolated instances
+
+To run more than one Appsmith session at a time, give each Firefox instance its own
+port and persistent profile:
+
+```sh
+./launch.sh 9222 appsmith-dev
+./launch.sh 9223 appsmith-staging
+```
+
+Named profiles are stored under `.firefox-profiles/<profile>` and are ignored by Git.
+Each profile keeps its own Firefox data and Appsmith login. When a profile is supplied,
+the launcher starts an additional instance without terminating other Firefox processes.
+
+The matching MCP server process must use the same port. Set
+`APPSMITH_BIDI_PORT=9223` before starting the second server on macOS/Linux, or in
+PowerShell:
+
+```powershell
+$env:APPSMITH_BIDI_PORT = "9223"
+```
+
+The optional first argument to `launch.sh` overrides `APPSMITH_BIDI_PORT` for
+Firefox. Without a profile name, the original single-instance behavior is preserved.
 
 ## Register with Claude Code
 
