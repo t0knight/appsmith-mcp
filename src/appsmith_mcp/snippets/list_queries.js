@@ -3,4 +3,5 @@
     pluginId: a.config?.pluginId, datasourceId: a.config?.datasource?.id,
     httpMethod: a.config?.actionConfiguration?.httpMethod,
     path: a.config?.actionConfiguration?.path,
+    runBehaviour: a.config?.runBehaviour,
 })))()

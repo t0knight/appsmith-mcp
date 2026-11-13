@@ -74,6 +74,16 @@ DATASOURCE_CONFIG_DEFAULTS: dict[str, dict] = {
         },
         "connection": {"mode": "READ_WRITE", "ssl": {"authType": "DEFAULT"}},
     },
+    "mssql-plugin": {
+        "endpoints": [{"host": "", "port": 1433}],
+        "authentication": {
+            "authenticationType": "dbAuth",
+            "databaseName": "",
+            "username": "",
+            "password": "",
+        },
+        "connection": {"mode": "READ_WRITE", "ssl": {"authType": "DEFAULT"}},
+    },
     "mongo-plugin": {
         "endpoints": [{"host": "", "port": 27017}],
         "authentication": {

@@ -1,18 +1,18 @@
 (async () => {
     const store = window.__store;
-    const state = store.getState();
-    const cw = state.entities.canvasWidgets || {};
-    const pid = state.entities.pageList.currentPageId;
-    const pw = (state.ui.pageWidgets || {})[pid];
-    const appId = state.ui.applications?.currentApplication?.id;
-    const layoutId = pw && pw.layoutId;
-
+    const cw = store.getState().entities.canvasWidgets || {};
     const out = [];
     const overrides = {};
 
     for (const u of WIDGETS) {
         const w = cw[u.widget_id];
-        if (!w) { out.push({ widget_id: u.widget_id, error: "widget not found" }); continue; }
+        if (!w) { out.push({ widget_id: u.widget_id, error: "widget not found on the current page. Only the loaded page is reachable — switch_page to the page that owns this widget and retry." }); continue; }
+        // Guard set_custom_widget_code (which passes a real srcDoc) against a wrong widget type —
+        // the internal flush callers pass no srcDoc and are unaffected.
+        if (u.srcDoc && Object.keys(u.srcDoc).length && w.type !== "CUSTOM_WIDGET") {
+            out.push({ widget_id: u.widget_id, error: `widget is ${w.type}, not a CUSTOM_WIDGET` });
+            continue;
+        }
         const merged = { ...(w.srcDoc || {}), ...(u.srcDoc || {}) };
         store.dispatch({
             type: "UPDATE_WIDGET_PROPERTY_REQUEST",
@@ -22,64 +22,18 @@
             type: "UPDATE_WIDGET_PROPERTY_REQUEST",
             payload: { widgetId: u.widget_id, propertyPath: "uncompiledSrcDoc", propertyValue: merged },
         });
-        overrides[u.widget_id] = merged;
+        // The DSL node carries srcDoc + uncompiledSrcDoc so a reload can't revert to the compiled-
+        // only version; both go through the override into the shared layout PUT.
+        overrides[u.widget_id] = { srcDoc: merged, uncompiledSrcDoc: merged };
+        out.push({ widget_id: u.widget_id });
     }
 
-    if (!appId || !layoutId || !pid) {
-        for (const u of WIDGETS) {
-            if (!out.find(r => r.widget_id === u.widget_id)) {
-                out.push({ widget_id: u.widget_id, error: "missing applicationId/layoutId/pageId" });
-            }
-        }
-        return out;
-    }
-
-    const build = (id) => {
-        const src = cw[id];
-        if (!src) return null;
-        const node = { ...src };
-        if (overrides[id]) {
-            node.srcDoc = overrides[id];
-            node.uncompiledSrcDoc = overrides[id];
-        }
-        if (Array.isArray(src.children)) {
-            node.children = src.children.map(build).filter(x => x !== null);
-        }
-        return node;
-    };
-    const tree = build("0");
-    if (!tree) {
-        for (const u of WIDGETS) {
-            if (!out.find(r => r.widget_id === u.widget_id)) {
-                out.push({ widget_id: u.widget_id, error: "could not build DSL tree from canvasWidgets" });
-            }
-        }
-        return out;
-    }
-
-    const url = "/api/v1/layouts/" + layoutId + "/pages/" + pid + "?applicationId=" + appId;
-    let status = 0, errText = null;
-    try {
-        const r = await fetch(url, {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ dsl: tree }),
-        });
-        status = r.status;
-        if (!r.ok) {
-            try { errText = (await r.text()).slice(0, 300); } catch (e) {}
-        }
-    } catch (e) {
-        errText = String(e);
-    }
-
-    for (const u of WIDGETS) {
-        if (out.find(r => r.widget_id === u.widget_id)) continue;
-        if (status >= 200 && status < 300) {
-            out.push({ widget_id: u.widget_id, synced: true });
-        } else {
-            out.push({ widget_id: u.widget_id, error: "save failed: HTTP " + status + (errText ? " " + errText : "") });
+    if (Object.keys(overrides).length) {
+        const p = await __persistLayout({ overrides });
+        for (const r of out) {
+            if (r.error) continue;
+            if (p.persisted) r.synced = true;
+            else r.error = p.error || ("save failed: HTTP " + p.status);
         }
     }
     return out;

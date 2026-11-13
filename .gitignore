@@ -4,3 +4,7 @@ __pycache__/
 dist/
 *.egg-info/
 .claude/
+.env
+.env.*
+.firefox-profiles/
+!.env.example
