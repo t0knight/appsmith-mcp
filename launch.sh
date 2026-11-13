@@ -15,8 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 #            once and the session sticks across relaunches.
 #
 # Examples (two instances side by side):
-#   ./launch.sh 9222 appsmith-tbox        # -> matches MCP "appsmith-tbox"
-#   ./launch.sh 9223 appsmith-credencial  # -> matches MCP "appsmith-credencial" (env APPSMITH_BIDI_PORT=9223)
+#   ./launch.sh 9222 appsmith             # -> matches MCP "appsmith"
+#   ./launch.sh 9223 appsmith-2           # -> matches MCP "appsmith-2" (env APPSMITH_BIDI_PORT=9223)
 #
 # Without a PROFILE the legacy single-instance behavior runs: kill any running
 # Firefox and relaunch on PORT using the default profile.
