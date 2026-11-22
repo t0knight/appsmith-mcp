@@ -88,6 +88,8 @@ CUSTOM_WIDGET_FIELDS = (
 
 async def ensure_ready():
     global ready
+    if client.ws is None:
+        ready = False
     try:
         await client.connect()
     except Exception:

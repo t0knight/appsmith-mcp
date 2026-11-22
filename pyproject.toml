@@ -10,7 +10,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = [
-    "mcp",
+    "mcp==1.27.0",
     "websockets",
     "jsbeautifier",
     "cssbeautifier",
