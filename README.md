@@ -25,23 +25,13 @@ code than by arranging Appsmith's native widgets on a visual grid.
 ## Prerequisites
 
 - **Firefox** — the server attaches to a running instance.
-- **Python 3.10+** and [uv](https://docs.astral.sh/uv/) or `pip`.
+- **Python 3.10+** and [uv](https://docs.astral.sh/uv/).
 - A reachable Appsmith instance you can log into.
 
 ## Install
 
-**uv:**
-
 ```sh
 uv sync
-```
-
-**pip:**
-
-```sh
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
 ```
 
 ## Launch Firefox with remote debugging
