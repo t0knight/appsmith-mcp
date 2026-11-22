@@ -65,9 +65,9 @@ port and persistent profile:
 ./launch.sh 9223 appsmith-staging
 ```
 
-Named profiles are stored under `.firefox-profiles/<profile>` and are ignored by Git.
-Each profile keeps its own Firefox data and Appsmith login. When a profile is supplied,
-the launcher starts an additional instance without terminating other Firefox processes.
+Profiles are stored under `.firefox-profiles/<profile>` and are ignored by Git. Each one
+keeps its own Firefox data and Appsmith login. If no profile is given, `default` is used.
+The launcher never closes other Firefox windows.
 
 The matching MCP server process must use the same port. Set
 `APPSMITH_BIDI_PORT=9223` before starting the second server on macOS/Linux, or in
@@ -78,7 +78,7 @@ $env:APPSMITH_BIDI_PORT = "9223"
 ```
 
 The optional first argument to `launch.sh` overrides `APPSMITH_BIDI_PORT` for
-Firefox. Without a profile name, the original single-instance behavior is preserved.
+Firefox.
 
 ## Register with Claude Code
 
