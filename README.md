@@ -130,7 +130,8 @@ After launching/relaunching Firefox, reconnect the server with `/mcp` so it re-a
 - `update_js_objects` — Replace the source of one or more JS objects.
 - `delete_js_objects` — Delete one or more JS objects.
 - `patch_js_objects` — Make targeted edits to JS object bodies without rewriting them.
-- `execute_js_functions` — Run JS object functions and return their results.
+- `execute_js_functions` — Run JS object functions and return their results. Blocked unless
+  unsafe execution is enabled (see [Execution policy](#execution-policy)).
 
 **Queries**
 
@@ -138,7 +139,8 @@ After launching/relaunching Firefox, reconnect the server with `/mcp` so it re-a
 - `create_queries` — Create one or more queries bound to datasources.
 - `update_queries` — Update one or more queries.
 - `delete_queries` — Delete one or more queries.
-- `execute_queries` — Run queries by id and return their responses.
+- `execute_queries` — Run read-only queries by id and return their responses (see
+  [Execution policy](#execution-policy)).
 
 **Datasources**
 
@@ -162,12 +164,41 @@ After launching/relaunching Firefox, reconnect the server with `/mcp` so it re-a
 - `get_url` — Return the URL loaded in the attached Firefox tab.
 - `navigate` — Navigate the tab to a URL.
 - `refresh_page` — Reload the tab and wait for it to finish.
-- `run_command` — Evaluate arbitrary JS in the tab and return the result.
+- `run_command` — Evaluate arbitrary JS in the tab and return the result. Blocked unless
+  unsafe execution is enabled (see [Execution policy](#execution-policy)).
 
 > **⚠️ `run_command`** evaluates arbitrary JavaScript in the attached browser tab with full
 > access to the Redux store and the page — it can read or modify anything in the live
 > session, bypassing the safety constraints of the other tools. It's an escape hatch for
 > exploring state and discovering action shapes; use it deliberately.
+
+## Execution policy
+
+`execute_queries` runs a query only after a fail-closed, read-only check of its saved
+configuration. Anything the policy cannot classify as a read is returned with
+`blocked: true` and is never sent to Appsmith:
+
+- **SQL** (MSSQL, MySQL, Oracle, Postgres, Redshift, Snowflake): a single `SELECT` or
+  `WITH ... SELECT`, with no write or administrative keyword (`INSERT`, `UPDATE`, `DELETE`,
+  `MERGE`, `EXEC`, `INTO`, `SET`, DDL, ...). Text that the engines' lexical rules could read
+  differently (backslash escapes, nested comments, `#` comments, dollar quoting) must be a
+  single read under every interpretation, and unterminated literals or comments are blocked.
+- **REST API**: `GET` and `HEAD` only.
+- **GraphQL**: queries only; mutations and subscriptions are blocked.
+- **MongoDB**: `FIND`, `COUNT`, `DISTINCT`, and `AGGREGATE` without `$out` or `$merge`.
+- **Any other plugin**: blocked.
+
+The check is **best-effort static analysis, not a guarantee**. It cannot tell what a database
+function or HTTP endpoint does when called (for example `SELECT pg_terminate_backend(...)`
+or a `GET` endpoint with side effects), and it inspects the saved text before Appsmith
+evaluates `{{ }}` bindings. Keep database and API permissions as the real boundary: give the
+datasources a read-only account wherever possible.
+
+`run_command` and `execute_js_functions` can bypass this policy (arbitrary JavaScript can
+call the execution API directly, and a JS function can run any query), so they are blocked
+by default. To allow them, start the MCP server with `APPSMITH_ALLOW_UNSAFE_EXECUTION=1`
+(`true` and `yes` also work). Like `APPSMITH_BIDI_PORT`, it applies per server process,
+so one instance can allow them while another stays read-only.
 
 ## License
 

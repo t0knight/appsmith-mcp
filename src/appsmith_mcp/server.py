@@ -7,10 +7,12 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from appsmith_mcp.bidi import BiDiClient
+from appsmith_mcp.config import ALLOW_UNSAFE_EXECUTION
 from appsmith_mcp.defaults import (
     DATASOURCE_CONFIG_DEFAULTS,
     QUERY_ACTION_CONFIG_DEFAULTS,
 )
+from appsmith_mcp.execution_policy import assess_query_action
 from appsmith_mcp.utils import format_source, parse_function_names, pick
 from appsmith_mcp.snippets import (
     ADD_WIDGETS_JS,
@@ -35,6 +37,7 @@ from appsmith_mcp.snippets import (
     EXECUTE_QUERIES_JS,
     GET_CURRENT_THEME_JS,
     GET_JS_OBJECTS_JS,
+    GET_QUERIES_JS,
     GET_WIDGET_JS,
     LIST_APPS_JS,
     LIST_DATASOURCES_JS,
@@ -498,16 +501,75 @@ async def update_queries(updates: list[dict]) -> list:
     return raw if isinstance(raw, list) else []
 
 
+def _blocked_query(query_id: str, reason: str, name: str | None = None) -> dict:
+    out = {"id": query_id}
+    if name is not None:
+        out["name"] = name
+    out.update(ok=False, blocked=True, error=reason)
+    return out
+
+
+async def _assess_queries(query_ids: list[str]) -> tuple[list[tuple[str, dict | None]], list[str]]:
+    """Apply the fail-closed read-only execution policy. Returns the per-id decision
+    (None = allowed, dict = blocked result) and the allowed ids in their original order."""
+    actions = await client.run_snippet(GET_QUERIES_JS, json_constants={"IDS": query_ids})
+    by_id = {a.get("id"): a for a in (actions or []) if isinstance(a, dict) and a.get("id")}
+    decisions: list[tuple[str, dict | None]] = []
+    allowed: list[str] = []
+    for query_id in query_ids:
+        action = by_id.get(query_id)
+        if action is None:
+            decisions.append((query_id, _blocked_query(
+                query_id,
+                "Execution blocked by the read-only policy: query metadata not found.",
+            )))
+            continue
+        decision = assess_query_action(action)
+        if not decision.allowed:
+            decisions.append((query_id, _blocked_query(query_id, decision.reason, action.get("name"))))
+            continue
+        allowed.append(query_id)
+        decisions.append((query_id, None))
+    return decisions, allowed
+
+
 @mcp.tool()
 async def execute_queries(query_ids: list[str]) -> list:
-    """Run multiple queries by id and return their responses. Equivalent to clicking the
-    Run button on each. Each result includes `{ok, statusCode, isExecutionSuccess, body}`."""
+    """Run READ-ONLY queries by id and return their responses, in the order requested.
+
+    Before dispatch, every query is checked by a fail-closed policy. SQL accepts only one
+    `SELECT` or `WITH ... SELECT`; REST accepts GET/HEAD; GraphQL accepts queries; MongoDB
+    accepts FIND/COUNT/DISTINCT and AGGREGATE without `$out`/`$merge`. Writes, stored
+    procedures, multiple SQL statements, unknown plugins and ambiguous configurations are
+    returned as `{id, name?, ok: false, blocked: true, error}` and are never dispatched.
+    The check is best-effort static analysis of the saved query, not a guarantee.
+
+    Allowed queries run like clicking the Run button on each; each result includes
+    `{ok, statusCode, isExecutionSuccess, body}`."""
     await ensure_ready()
-    raw = await client.run_snippet(
-        EXECUTE_QUERIES_JS,
-        json_constants={"ACTION_IDS": query_ids or []},
-    )
-    return raw if isinstance(raw, list) else []
+    decisions, allowed_ids = await _assess_queries(list(query_ids or []))
+
+    raw = []
+    if allowed_ids:
+        raw = await client.run_snippet(
+            EXECUTE_QUERIES_JS,
+            json_constants={"ACTION_IDS": allowed_ids},
+        )
+    # The snippet runs the allowed ids sequentially and returns one result per id, in order.
+    executed = iter(raw if isinstance(raw, list) else [])
+
+    result: list[dict] = []
+    for query_id, blocked in decisions:
+        if blocked is not None:
+            result.append(blocked)
+            continue
+        result.append(next(executed, None) or {
+            "id": query_id,
+            "ok": False,
+            "blocked": False,
+            "error": "The allowed execution returned no result.",
+        })
+    return result
 
 
 @mcp.tool()
@@ -987,12 +1049,36 @@ async def update_js_objects(updates: list[dict]) -> list:
     return raw if isinstance(raw, list) else []
 
 
+UNSAFE_EXECUTION_HINT = (
+    "Set APPSMITH_ALLOW_UNSAFE_EXECUTION=1 in this MCP server's environment to allow it."
+)
+
+
 @mcp.tool()
 async def execute_js_functions(executions: list[dict]) -> list:
     """Execute multiple JS functions in one tool call. Each entry is `{"js_object_id",
     "function_name"}`. Returns each result if the eval tree captured it; otherwise
     reports that the dispatch fired but no value surfaced (function may still have run
-    for its side effects)."""
+    for its side effects).
+
+    Blocked unless the user started the server with APPSMITH_ALLOW_UNSAFE_EXECUTION=1: a
+    JS function can run any query and have other side effects, bypassing the read-only
+    execution policy of execute_queries."""
+    if not ALLOW_UNSAFE_EXECUTION:
+        return [
+            {
+                "jsObjectId": item.get("js_object_id"),
+                "functionName": item.get("function_name"),
+                "ok": False,
+                "blocked": True,
+                "error": (
+                    "Execution blocked: JavaScript functions can have side effects. "
+                    + UNSAFE_EXECUTION_HINT
+                ),
+            }
+            for item in (executions or [])
+            if isinstance(item, dict)
+        ]
     await ensure_ready()
     raw = await client.run_snippet(
         EXECUTE_JS_FUNCTIONS_JS,
@@ -1008,7 +1094,20 @@ async def run_command(snippet: str) -> dict:
     Redux state and discovering action shapes. Result must be JSON-serializable. Use
     sparingly and only with explicit user permission — this is an escape hatch that can
     dispatch any action and read any state, bypassing the safety constraints of the
-    other tools."""
+    other tools.
+
+    Blocked unless the user started the server with APPSMITH_ALLOW_UNSAFE_EXECUTION=1:
+    arbitrary JavaScript can call the execution API directly and bypass the read-only
+    execution policy of execute_queries."""
+    if not ALLOW_UNSAFE_EXECUTION:
+        return {
+            "ok": False,
+            "blocked": True,
+            "error": (
+                "Execution blocked: arbitrary JavaScript can bypass the read-only policy. "
+                + UNSAFE_EXECUTION_HINT
+            ),
+        }
     await ensure_ready()
     result = await client.run_snippet(snippet)
     return {"result": result}
