@@ -91,6 +91,22 @@ After launching/relaunching Firefox, reconnect the server with `/mcp` so it re-a
 - `dump_state` — Dump the current app's pages and widget tree (optionally full detail).
 - `get_logs` — Return log/error metadata (no message text).
 
+**State inspection**
+
+- `get_store` — Return `appsmith.store` values, optionally limited to some keys.
+- `eval_value` — Read the evaluated value of one or more paths (e.g. `Table1.selectedRow.id`).
+- `list_children` — List the direct children of a widget or canvas.
+- `get_datasource` — Return a datasource's configuration for every environment.
+
+> **Secret redaction is best-effort.** `get_store`, `eval_value`, `get_datasource`, and
+> `dump_state` replace secret-looking values with `[REDACTED]` before returning them: values
+> under secret-like key names (`password`, `token`, `apiKey`, `Authorization`, `Cookie`, ...),
+> `{key, value}` headers and parameters with such a key, API-key authentication values,
+> `Bearer`/`Basic` credentials, JWTs, and passwords embedded in URLs. Detection relies on
+> names and a few formats, so a secret stored under a neutral name (`value`, `config`,
+> `data`, ...) in another format is returned unchanged. It reduces accidental exposure to
+> the agent; it is not a guarantee.
+
 **Pages**
 
 - `list_pages` — List the app's pages, flags, and which is active.

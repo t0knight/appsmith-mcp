@@ -36,7 +36,7 @@ const __state = {
     appTheming: { selectedTheme: { properties: { colors: { primaryColor: "#553DE9" } } } },
     ...(__SEED.ui || {}),
   },
-  evaluations: { tree: {} },
+  evaluations: { tree: __SEED.evalTree || {} },
 };
 let __n = 1;
 const __subs = new Set();

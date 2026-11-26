@@ -1,6 +1,7 @@
 import asyncio
 import atexit
 import json
+import re
 import signal
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from appsmith_mcp.defaults import (
     QUERY_ACTION_CONFIG_DEFAULTS,
 )
 from appsmith_mcp.utils import format_source, parse_function_names, pick
+from appsmith_mcp.redaction import redact
 from appsmith_mcp.snippets import (
     ADD_WIDGETS_JS,
     BOOTSTRAP_JS,
@@ -36,6 +38,7 @@ from appsmith_mcp.snippets import (
     GET_CURRENT_THEME_JS,
     GET_JS_OBJECTS_JS,
     GET_WIDGET_JS,
+    INSPECT_STATE_JS,
     LIST_APPS_JS,
     LIST_DATASOURCES_JS,
     LIST_JS_OBJECTS_JS,
@@ -373,6 +376,19 @@ async def get_widget(widget_id: str) -> dict:
 
 
 @mcp.tool()
+async def list_children(parent_id: str) -> list | dict:
+    """List only the direct children of a widget or canvas, by id or widget name, sorted by
+    position. Returns lightweight id/name/type/parentId/position/isVisible metadata — e.g. a
+    modal's inner canvas. A fixed read-only inspection; nothing is evaluated as code."""
+    await ensure_ready()
+    raw = await client.run_snippet(
+        INSPECT_STATE_JS,
+        json_constants={"MODE": "list_children", "ARG": {"parent_id": parent_id}},
+    )
+    return raw if isinstance(raw, (list, dict)) else {"raw": raw}
+
+
+@mcp.tool()
 async def check_layout() -> list:
     """Diagnose layout issues across every widget on the current page. For each widget
     returns its grid box, actual rendered pixel dimensions, and whether content overflows
@@ -434,6 +450,21 @@ async def list_datasources() -> list:
     await ensure_ready()
     raw = await client.run_snippet(LIST_DATASOURCES_JS)
     return [pick(d, DATASOURCE_FIELDS) for d in (raw or []) if isinstance(d, dict)]
+
+
+@mcp.tool()
+async def get_datasource(datasource_id: str) -> dict:
+    """Return a datasource's configuration for every environment, by id or name:
+    `{id, name, pluginId, workspaceId, environments: [{environmentId,
+    datasourceConfiguration}]}`. Secret-looking values (passwords, tokens, API keys,
+    sensitive headers, URL passwords) are replaced with `[REDACTED]` on a best-effort basis
+    before they are returned."""
+    await ensure_ready()
+    raw = await client.run_snippet(
+        INSPECT_STATE_JS,
+        json_constants={"MODE": "get_datasource", "ARG": {"datasource_id": datasource_id}},
+    )
+    return redact(raw) if isinstance(raw, dict) else {"raw": raw}
 
 
 @mcp.tool()
@@ -560,10 +591,62 @@ async def dump_state(verbose: bool = False) -> dict:
     actionConfiguration), `jsObjects` (with their bodies), and a derived
     `connections` list mapping widget property/trigger paths to the queries/JS
     objects/datasources they bind to by name. This can be large for non-trivial
-    apps."""
+    apps.
+
+    Secret-looking values (datasource passwords, tokens, sensitive headers, URL passwords)
+    are replaced with `[REDACTED]` on a best-effort basis before they are returned."""
     await ensure_ready()
     raw = await client.run_snippet(DUMP_STATE_JS, json_constants={"VERBOSE": verbose})
-    return raw if isinstance(raw, dict) else {"raw": raw}
+    return redact(raw) if isinstance(raw, dict) else {"raw": raw}
+
+
+def _last_path_segment(path: str) -> str | None:
+    """`Api1.config.headers[0].token` -> `token`: the key the evaluated value is stored under."""
+    segments = [s for s in re.split(r"[.\[\]]", path or "") if s]
+    return segments[-1] if segments else None
+
+
+@mcp.tool()
+async def get_store(keys: list[str] | None = None) -> dict:
+    """Return the current `appsmith.store` (what `storeValue` writes and
+    `{{appsmith.store.*}}` reads), optionally limited to `keys`: `{store: {...}}`.
+    Secret-looking values are replaced with `[REDACTED]` on a best-effort basis."""
+    await ensure_ready()
+    raw = await client.run_snippet(
+        INSPECT_STATE_JS,
+        json_constants={"MODE": "get_store", "ARG": {"keys": keys or []}},
+    )
+    return redact(raw) if isinstance(raw, dict) else {"raw": raw}
+
+
+@mcp.tool()
+async def eval_value(paths: list[str] | str) -> dict:
+    """Read the EVALUATED value of a binding or property from the eval tree — what Appsmith
+    actually computed. Each path is `<entityName>.<dotted.path>` with optional numeric
+    indexes, e.g. `"Table1.selectedRow.id"` or `"q_users.data[0].name"`. Only property names
+    and indexes are accepted; nothing is evaluated as code.
+
+    With a single path string, returns `{path, found, value}`. With a list, returns a map of
+    path -> value (null when the path does not resolve). Secret-looking values are replaced
+    with `[REDACTED]` on a best-effort basis."""
+    await ensure_ready()
+    requested = [paths] if isinstance(paths, str) else list(paths or [])
+    raw = await client.run_snippet(
+        INSPECT_STATE_JS,
+        json_constants={"MODE": "eval_value", "ARG": {"paths": requested}},
+    )
+    results = []
+    for item in raw if isinstance(raw, list) else []:
+        if isinstance(item, dict) and item.get("found"):
+            item = {**item, "value": redact(item.get("value"), _last_path_segment(item.get("path", "")))}
+        results.append(item)
+    if isinstance(paths, str):
+        return results[0] if results else {"path": paths, "found": False}
+    return {
+        item.get("path"): item.get("value") if item.get("found") else None
+        for item in results
+        if isinstance(item, dict)
+    }
 
 
 @mcp.tool()
