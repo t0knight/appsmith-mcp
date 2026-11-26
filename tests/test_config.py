@@ -42,6 +42,32 @@ print(json.dumps({"port": config.BIDI_PORT, "url": config.BIDI_WS_URL}))
             {"port": 9333, "url": "ws://127.0.0.1:9333/session"},
         )
 
+    def _read_unsafe_execution(self, value=None):
+        env = os.environ.copy()
+        env.pop("APPSMITH_ALLOW_UNSAFE_EXECUTION", None)
+        if value is not None:
+            env["APPSMITH_ALLOW_UNSAFE_EXECUTION"] = value
+        completed = subprocess.run(
+            [sys.executable, "-c", "from appsmith_mcp import config; print(config.ALLOW_UNSAFE_EXECUTION)"],
+            cwd=REPO_ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return completed.stdout.strip() == "True"
+
+    def test_unsafe_execution_is_disabled_by_default(self):
+        self.assertFalse(self._read_unsafe_execution())
+        for value in ("", "0", "false", "no", "maybe"):
+            with self.subTest(value=value):
+                self.assertFalse(self._read_unsafe_execution(value))
+
+    def test_environment_enables_unsafe_execution(self):
+        for value in ("1", "true", "YES", " True "):
+            with self.subTest(value=value):
+                self.assertTrue(self._read_unsafe_execution(value))
+
 
 if __name__ == "__main__":
     unittest.main()
